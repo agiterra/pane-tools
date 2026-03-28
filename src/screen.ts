@@ -8,6 +8,13 @@
  */
 
 import { $ } from "bun";
+import { join } from "path";
+import { existsSync } from "fs";
+
+// Prefer homebrew screen (5.x with color support) over macOS built-in (4.0)
+const SCREEN = existsSync("/opt/homebrew/bin/screen")
+  ? "/opt/homebrew/bin/screen"
+  : "screen";
 
 export type ScreenSession = {
   name: string;
@@ -22,8 +29,10 @@ export async function createSession(
   name: string,
   command: string,
 ): Promise<ScreenSession> {
-  // Create detached screen session
-  await $`screen -dmS ${name} bash -c ${command}`.quiet();
+  // Create detached screen session with login shell (loads profile, PATH, env)
+  const shell = process.env.SHELL ?? "/bin/zsh";
+  const screenrc = join(process.env.HOME ?? "/tmp", ".wire", "screenrc");
+  await $`${SCREEN} -c ${screenrc} -dmS ${name} ${shell} -lc ${command}`.quiet();
 
   // Get the screen PID
   const pid = await getSessionPid(name);
@@ -38,7 +47,7 @@ export async function createSession(
  */
 export async function listSessions(): Promise<ScreenSession[]> {
   try {
-    const result = await $`screen -ls`.quiet().nothrow();
+    const result = await $`${SCREEN} -ls`.quiet().nothrow();
     const output = result.stdout.toString();
     const sessions: ScreenSession[] = [];
     for (const line of output.split("\n")) {
@@ -74,7 +83,7 @@ export async function isAlive(name: string): Promise<boolean> {
  * Send keystrokes to a screen session (works even when detached).
  */
 export async function sendKeys(name: string, text: string): Promise<void> {
-  await $`screen -S ${name} -X stuff ${text}`.quiet();
+  await $`${SCREEN} -S ${name} -X stuff ${text}`.quiet();
 }
 
 /**
@@ -83,7 +92,7 @@ export async function sendKeys(name: string, text: string): Promise<void> {
 export async function readOutput(name: string): Promise<string> {
   const tmpFile = `/tmp/screen-hardcopy-${name}-${Date.now()}`;
   try {
-    await $`screen -S ${name} -X hardcopy ${tmpFile}`.quiet();
+    await $`${SCREEN} -S ${name} -X hardcopy ${tmpFile}`.quiet();
     const content = await Bun.file(tmpFile).text();
     await $`rm -f ${tmpFile}`.quiet();
     return content.trimEnd();
@@ -96,5 +105,5 @@ export async function readOutput(name: string): Promise<string> {
  * Kill a screen session.
  */
 export async function killSession(name: string): Promise<void> {
-  await $`screen -S ${name} -X quit`.quiet().nothrow();
+  await $`${SCREEN} -S ${name} -X quit`.quiet().nothrow();
 }

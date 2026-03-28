@@ -8,11 +8,17 @@
 import { join } from "path";
 import { PaneStore, type Agent, type Tab, type Slot } from "./store.js";
 import * as screen from "./screen.js";
+import * as iterm from "./iterm.js";
 import { getLaunchCommand } from "./runtimes.js";
 import { reconcile, formatReport } from "./reconciler.js";
 
 const DEFAULT_DB = join(process.env.HOME ?? "/tmp", ".wire", "panes.db");
 const SCREEN_PREFIX = "wire-";
+
+/** Escape a string for use in a shell command. */
+function shellEscape(s: string): string {
+  return `'${s.replace(/'/g, "'\\''")}'`;
+}
 
 export class Orchestrator {
   readonly store: PaneStore;
@@ -48,20 +54,26 @@ export class Orchestrator {
       this.store.deleteAgent(opts.id);
     }
 
-    // Build launch command
+    // Build launch command with agent identity injected as env vars
     const wireUrl = process.env.WIRE_URL ?? "http://localhost:9800";
-    let command = getLaunchCommand(runtime, {
+    const projectDir = opts.projectDir ?? process.cwd();
+    const vars = {
       AGENT_ID: opts.id,
       AGENT_NAME: opts.displayName,
       WIRE_URL: wireUrl,
-      PROJECT_DIR: opts.projectDir ?? process.cwd(),
-    });
+      PROJECT_DIR: projectDir,
+    };
+    let command = getLaunchCommand(runtime, vars);
     if (opts.extraFlags) {
       command += ` ${opts.extraFlags}`;
     }
 
+    // Prefix with env vars and cd so the agent has its identity and working dir
+    const envPrefix = `WIRE_AGENT_ID=${shellEscape(opts.id)} WIRE_AGENT_NAME=${shellEscape(opts.displayName)} WIRE_URL=${shellEscape(wireUrl)}`;
+    const fullCommand = `cd ${shellEscape(projectDir)} && ${envPrefix} ${command}`;
+
     // Create screen session
-    const session = await screen.createSession(screenName, command);
+    const session = await screen.createSession(screenName, fullCommand);
 
     // Record in DB
     return this.store.createAgent({
@@ -86,51 +98,75 @@ export class Orchestrator {
 
   /**
    * Attach an agent to a slot (make it visible in a pane).
+   * Runs `screen -r <name>` in the slot's iTerm2 session.
    */
-  attachAgent(agentId: string, slotName: string): void {
+  async attachAgent(agentId: string, slotName: string): Promise<void> {
     const agent = this.store.getAgent(agentId);
     if (!agent) throw new Error(`agent '${agentId}' not found`);
     const slot = this.store.getSlot(slotName);
     if (!slot) throw new Error(`slot '${slotName}' not found`);
+    if (!slot.iterm_id) throw new Error(`slot '${slotName}' has no iTerm2 session`);
 
     // Detach any agent currently in this slot
     const occupants = this.store.listAgents().filter((a) => a.slot === slotName);
     for (const occ of occupants) {
+      // Detach screen in the iTerm session before reassigning
+      if (slot.iterm_id) {
+        await iterm.writeToSession(slot.iterm_id, "/opt/homebrew/bin/screen -d").catch(() => {});
+      }
       this.store.updateAgentSlot(occ.id, null);
     }
 
+    // Attach screen session to the iTerm2 pane
+    await iterm.writeToSession(slot.iterm_id, `/opt/homebrew/bin/screen -r ${agent.screen_name}`);
     this.store.updateAgentSlot(agentId, slotName);
   }
 
   /**
    * Detach an agent from its slot (agent keeps running in background).
+   * Sends ctrl-a,d to detach screen, leaving an empty shell in the pane.
    */
-  detachAgent(agentId: string): void {
+  async detachAgent(agentId: string): Promise<void> {
     const agent = this.store.getAgent(agentId);
     if (!agent) throw new Error(`agent '${agentId}' not found`);
+
+    if (agent.slot) {
+      const slot = this.store.getSlot(agent.slot);
+      if (slot?.iterm_id) {
+        // Detach screen (ctrl-a, d)
+        await iterm.writeToSession(slot.iterm_id, String.fromCharCode(1) + "d").catch(() => {});
+      }
+    }
+
     this.store.updateAgentSlot(agentId, null);
   }
 
   /**
    * Move an agent to a different slot.
    */
-  moveAgent(agentId: string, toSlot: string): void {
-    this.attachAgent(agentId, toSlot);
+  async moveAgent(agentId: string, toSlot: string): Promise<void> {
+    await this.detachAgent(agentId);
+    await this.attachAgent(agentId, toSlot);
   }
 
   /**
    * Swap two agents' slots.
    */
-  swapAgents(agentIdA: string, agentIdB: string): void {
+  async swapAgents(agentIdA: string, agentIdB: string): Promise<void> {
     const a = this.store.getAgent(agentIdA);
     const b = this.store.getAgent(agentIdB);
     if (!a) throw new Error(`agent '${agentIdA}' not found`);
     if (!b) throw new Error(`agent '${agentIdB}' not found`);
 
+    // Detach both from their current slots
+    if (a.slot) await this.detachAgent(agentIdA);
+    if (b.slot) await this.detachAgent(agentIdB);
+
+    // Re-attach in swapped positions
     const slotA = a.slot;
     const slotB = b.slot;
-    this.store.updateAgentSlot(agentIdA, slotB);
-    this.store.updateAgentSlot(agentIdB, slotA);
+    if (slotB) await this.attachAgent(agentIdA, slotB);
+    if (slotA) await this.attachAgent(agentIdB, slotA);
   }
 
   /**
@@ -183,17 +219,72 @@ export class Orchestrator {
 
   // --- Slots ---
 
-  createSlot(tab: string, name: string, position: string = ""): Slot {
+  /**
+   * Create a slot by splitting the current iTerm2 pane.
+   * Direction is inferred from position: "below"/"above" = horizontal,
+   * "left"/"right" = vertical. Default: horizontal (below).
+   */
+  async createSlot(tab: string, name: string, position: string = "below", relativeTo?: string): Promise<Slot> {
     if (!this.store.getTab(tab)) throw new Error(`tab '${tab}' not found`);
-    return this.store.createSlot(name, tab, position);
+
+    const direction = (position === "left" || position === "right")
+      ? "vertical"
+      : "horizontal";
+
+    // Split relative to a specific session, or fall back to current
+    const itermId = relativeTo
+      ? await iterm.splitSession(relativeTo, direction)
+      : await iterm.splitPane(direction);
+
+    const slot = this.store.createSlot(name, tab, position);
+    this.store.setSlotItermId(name, itermId);
+    return { ...slot, iterm_id: itermId };
   }
 
   listSlots(tab?: string): Slot[] {
     return this.store.listSlots(tab);
   }
 
-  deleteSlot(name: string): void {
+  /**
+   * Destroy a slot — closes the iTerm2 session and removes from DB.
+   */
+  async deleteSlot(name: string): Promise<void> {
+    const slot = this.store.getSlot(name);
+    if (slot?.iterm_id) {
+      await iterm.closeSession(slot.iterm_id);
+    }
     this.store.deleteSlot(name);
+  }
+
+  // --- URLs ---
+
+  /**
+   * Open a URL in an iTerm2 web browser pane.
+   * Creates a slot with a native iTerm2 browser session.
+   */
+  async openUrl(opts: {
+    tab: string;
+    slot?: string;
+    url: string;
+    position?: string;
+    relativeTo?: string;
+  }): Promise<{ slot: Slot; url: string }> {
+    if (!this.store.getTab(opts.tab)) throw new Error(`tab '${opts.tab}' not found`);
+
+    const slotName = opts.slot ?? `url-${Date.now()}`;
+    const position = opts.position ?? "below";
+    const direction = (position === "left" || position === "right")
+      ? "vertical"
+      : "horizontal";
+
+    const itermId = opts.relativeTo
+      ? await iterm.splitSessionWebBrowser(opts.relativeTo, opts.url, direction)
+      : await iterm.splitWebBrowser(opts.url, direction);
+
+    const slot = this.store.createSlot(slotName, opts.tab, position);
+    this.store.setSlotItermId(slotName, itermId);
+
+    return { slot: { ...slot, iterm_id: itermId }, url: opts.url };
   }
 
   // --- Reconciler ---

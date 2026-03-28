@@ -1,13 +1,15 @@
 {
   "name": "@agiterra/pane-tools",
-  "version": "0.1.0",
-  "description": "Agent pane orchestration primitives — screen sessions, iTerm2 panes, SQLite state, runtime-agnostic.",
+  "version": "0.2.0",
+  "description": "Agent pane orchestration primitives \u2014 screen sessions, iTerm2 panes, SQLite state, runtime-agnostic.",
   "type": "module",
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts"
   },
-  "files": ["src/"],
+  "files": [
+    "src/"
+  ],
   "devDependencies": {
     "bun-types": "latest"
   },
