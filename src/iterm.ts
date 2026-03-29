@@ -261,7 +261,7 @@ export async function splitWebBrowser(
   writeBrowserProfile(url);
 
   // Small delay for iTerm2 to pick up the profile
-  await new Promise((r) => setTimeout(r, 200));
+  await new Promise((r) => setTimeout(r, 500));
 
   const verb = direction === "horizontal" ? "horizontally" : "vertically";
   return osascript(`
@@ -285,7 +285,7 @@ export async function splitSessionWebBrowser(
   direction: "horizontal" | "vertical" = "horizontal",
 ): Promise<string> {
   writeBrowserProfile(url);
-  await new Promise((r) => setTimeout(r, 200));
+  await new Promise((r) => setTimeout(r, 500));
 
   const verb = direction === "horizontal" ? "horizontally" : "vertically";
   return osascript(`

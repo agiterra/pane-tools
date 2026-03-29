@@ -327,7 +327,7 @@ export class Orchestrator {
       : "horizontal";
 
     const itermId = opts.relativeTo
-      ? await iterm.splitSessionWebBrowser(opts.relativeTo, opts.url, direction)
+      ? await iterm.splitSessionWebBrowser(this.resolveSession(opts.relativeTo), opts.url, direction)
       : await iterm.splitWebBrowser(opts.url, direction);
 
     const slot = this.store.createSlot(slotName, opts.tab, position);
