@@ -203,15 +203,14 @@ export async function isSessionAlive(sessionId: string): Promise<boolean> {
  * Badges are overlay text shown in the corner of the pane.
  */
 export async function setBadge(sessionId: string, text: string): Promise<void> {
-  const b64 = Buffer.from(text).toString("base64");
-  // Use escape sequence via AppleScript write
+  const escaped = text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   await osascript(`
     tell application "iTerm2"
       repeat with w in windows
         repeat with t in tabs of w
           repeat with s in sessions of t
             if id of s is "${sessionId}" then
-              tell s to write text "printf '\\e]1337;SetBadgeFormat=${b64}\\a'"
+              set badge of s to "${escaped}"
               return
             end if
           end repeat
