@@ -10,7 +10,7 @@
  */
 
 import { $ } from "bun";
-import { writeFileSync, mkdirSync } from "fs";
+import { writeFileSync, mkdirSync, unlinkSync } from "fs";
 import { join } from "path";
 
 /**
@@ -236,6 +236,8 @@ const BROWSER_PROFILE_NAME = "Pane Web Browser";
  */
 function writeBrowserProfile(url: string): void {
   mkdirSync(DYNAMIC_PROFILES_DIR, { recursive: true });
+  // Delete first to force iTerm2 to re-read (prevents stale cache)
+  try { unlinkSync(BROWSER_PROFILE_FILE); } catch {}
   const profile = {
     Profiles: [
       {
