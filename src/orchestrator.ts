@@ -270,8 +270,11 @@ export class Orchestrator {
    * Register an existing iTerm2 session as a named slot.
    * Use this so agents can register their own pane and split relative to it.
    */
-  registerSlot(tab: string, name: string, itermSessionId: string): Slot {
+  async registerSlot(tab: string, name: string, itermSessionId: string): Promise<Slot> {
     if (!this.store.getTab(tab)) throw new Error(`tab '${tab}' not found`);
+
+    const alive = await iterm.isSessionAlive(itermSessionId);
+    if (!alive) throw new Error(`iTerm2 session ${itermSessionId} not found — ITERM_SESSION_ID may be stale`);
 
     const existing = this.store.getSlot(name);
     if (existing) {
@@ -311,9 +314,19 @@ export class Orchestrator {
       : "horizontal";
 
     // Split relative to a named slot, raw UUID, or fall back to current
-    const itermId = relativeTo
-      ? await iterm.splitSession(this.resolveSession(relativeTo), direction)
-      : await iterm.splitPane(direction);
+    let itermId: string;
+    if (relativeTo) {
+      const resolvedId = this.resolveSession(relativeTo);
+      const alive = await iterm.isSessionAlive(resolvedId);
+      if (alive) {
+        itermId = await iterm.splitSession(resolvedId, direction);
+      } else {
+        // Stale session — fall back to splitting the current pane
+        itermId = await iterm.splitPane(direction);
+      }
+    } else {
+      itermId = await iterm.splitPane(direction);
+    }
 
     const slot = this.store.createSlot(name, tab, position);
     this.store.setSlotItermId(name, itermId);
