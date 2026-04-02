@@ -56,7 +56,8 @@ export async function sessionIdForTty(ttyName: string): Promise<string | null> {
       end tell
     `);
     return result === "NOT_FOUND" ? null : result;
-  } catch {
+  } catch (e) {
+    console.error(`[crew] sessionIdForTty failed for ${devTty}:`, e);
     return null;
   }
 }
@@ -135,24 +136,27 @@ export async function writeToSession(
 
 /**
  * Close a specific iTerm2 session.
+ * Throws if the session is not found or the close fails.
  */
 export async function closeSession(sessionId: string): Promise<void> {
-  await osascript(`
+  const result = await osascript(`
     tell application "iTerm2"
       repeat with w in windows
         repeat with t in tabs of w
           repeat with s in sessions of t
             if id of s is "${sessionId}" then
               close s
-              return
+              return "closed"
             end if
           end repeat
         end repeat
       end repeat
+      return "not_found"
     end tell
-  `).catch(() => {
-    // Session may already be gone
-  });
+  `);
+  if (result === "not_found") {
+    throw new Error(`iTerm2 session not found: ${sessionId} — pane may have been closed manually or session ID is stale`);
+  }
 }
 
 /**
@@ -194,6 +198,52 @@ export async function isSessionAlive(sessionId: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// --- Titles ---
+
+/**
+ * Set the name of a specific session (pane title).
+ * For this to stick, disable "Allow session to set title" in
+ * iTerm2 Preferences → Profiles → Terminal.
+ */
+export async function setSessionName(sessionId: string, name: string): Promise<void> {
+  const escaped = name.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  await osascript(`
+    tell application "iTerm2"
+      repeat with w in windows
+        repeat with t in tabs of w
+          repeat with s in sessions of t
+            if id of s is "${sessionId}" then
+              tell s to set name to "${escaped}"
+              return
+            end if
+          end repeat
+        end repeat
+      end repeat
+    end tell
+  `);
+}
+
+/**
+ * Set the name of the tab containing a specific session.
+ */
+export async function setTabName(sessionId: string, name: string): Promise<void> {
+  const escaped = name.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  await osascript(`
+    tell application "iTerm2"
+      repeat with w in windows
+        repeat with t in tabs of w
+          repeat with s in sessions of t
+            if id of s is "${sessionId}" then
+              tell t to set name to "${escaped}"
+              return
+            end if
+          end repeat
+        end repeat
+      end repeat
+    end tell
+  `);
 }
 
 // --- Badges ---

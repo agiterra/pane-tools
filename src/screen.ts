@@ -80,6 +80,14 @@ export async function isAlive(name: string): Promise<boolean> {
 }
 
 /**
+ * Detach a screen session via the control socket.
+ * Works even from inside the session itself.
+ */
+export async function detachSession(name: string): Promise<void> {
+  await $`${SCREEN} -S ${name} -X detach`.quiet().nothrow();
+}
+
+/**
  * Send keystrokes to a screen session (works even when detached).
  */
 export async function sendKeys(name: string, text: string): Promise<void> {
