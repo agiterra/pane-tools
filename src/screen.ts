@@ -35,9 +35,15 @@ export async function createSession(
   command: string,
 ): Promise<ScreenSession> {
   // Create detached screen session with login shell (loads profile, PATH, env)
+  // Write command to a self-deleting temp script to avoid quoting issues.
+  // Bun's $ escapes interpolated values, but screen passes remaining args
+  // as argv to the child — so "zsh -lc 'cd /a && cmd'" gets split at &&.
   const shell = process.env.SHELL ?? "/bin/zsh";
   const screenrc = join(process.env.HOME ?? "/tmp", ".wire", "screenrc");
-  await $`${SCREEN} -c ${screenrc} -dmS ${name} ${shell} -lc ${command}`.quiet();
+  const scriptFile = `/tmp/crew-launch-${name}-${Date.now()}.sh`;
+  await Bun.write(scriptFile, `#!/usr/bin/env -S ${shell} -l\nrm -f '${scriptFile}'\n${command}\n`);
+  await $`chmod +x ${scriptFile}`.quiet();
+  await $`${SCREEN} -c ${screenrc} -dmS ${name} ${scriptFile}`.quiet();
 
   // Get the screen PID
   const pid = await getSessionPid(name);
