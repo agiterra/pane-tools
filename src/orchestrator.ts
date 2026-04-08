@@ -396,8 +396,13 @@ export class Orchestrator {
       ? "vertical"
       : "horizontal";
 
+    // Resolve themed background image before splitting (profile must be written first)
+    const tabRow = this.store.getTab(tab);
+    const bgPath = tabRow?.theme ? backgroundImagePath(tabRow.theme, paneName) : null;
+    const splitOpts = bgPath ? { backgroundImage: bgPath } : undefined;
+
     // Split relative to a named pane, raw UUID, or fall back to current.
-    // Use the "Crew Empty Pane" profile for a clean placeholder.
+    // Uses the "Crew Empty Pane" profile for a clean placeholder.
     let itermId: string;
     if (relativeTo) {
       const resolvedId = this.resolveSession(relativeTo);
@@ -408,24 +413,14 @@ export class Orchestrator {
           `Re-register the pane or omit relative_to to split the caller's pane.`
         );
       }
-      itermId = await iterm.splitSessionEmpty(resolvedId, direction);
+      itermId = await iterm.splitSessionEmpty(resolvedId, direction, splitOpts);
     } else {
-      itermId = await iterm.splitPaneEmpty(direction);
+      itermId = await iterm.splitPaneEmpty(direction, splitOpts);
     }
 
     const pane = this.store.createPane(paneName, tab, position);
     this.store.setPaneItermId(paneName, itermId);
     await iterm.setSessionName(itermId, titleCase(paneName));
-
-    // Set themed background image if available
-    const tabRow = this.store.getTab(tab);
-    if (tabRow?.theme) {
-      const bgPath = backgroundImagePath(tabRow.theme, paneName);
-      if (bgPath) {
-        await iterm.setBackgroundImage(itermId, bgPath);
-      }
-    }
-
     return { ...pane, iterm_id: itermId };
   }
 

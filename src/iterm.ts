@@ -312,35 +312,47 @@ const BROWSER_PROFILE_NAME = "Pane Web Browser";
 const EMPTY_PANE_PROFILE_FILE = join(DYNAMIC_PROFILES_DIR, "crew-empty-pane.json");
 const EMPTY_PANE_PROFILE_NAME = "Crew Empty Pane";
 
+/** Default blend: 0 = full image, 1 = background color only. 0.2 = mostly dark, subtle image. */
+const DEFAULT_BLEND = 0.2;
+
 /**
- * Ensure the "Crew Empty Pane" dynamic profile exists.
- * This profile runs a placeholder message instead of a shell.
- * When an agent attaches via `screen -r`, it takes over the session.
+ * Write the "Crew Empty Pane" dynamic profile.
+ * Optionally includes a background image with blend for readability.
  */
-export function ensureEmptyPaneProfile(): void {
+export function writeEmptyPaneProfile(opts?: {
+  backgroundImage?: string;
+  blend?: number;
+}): void {
   mkdirSync(DYNAMIC_PROFILES_DIR, { recursive: true });
-  const profile = {
-    Profiles: [
-      {
-        Name: EMPTY_PANE_PROFILE_NAME,
-        Guid: "crew-empty-pane-001",
-        "Custom Command": "Yes",
-        Command: "bash -c 'printf \"\\n  \\033[2m☐ Available — no agent attached\\033[0m\\n\\n\" && cat'",
-        "Silence Bell": true,
-      },
-    ],
+  const profile: Record<string, unknown> = {
+    Name: EMPTY_PANE_PROFILE_NAME,
+    Guid: "crew-empty-pane-001",
+    "Custom Command": "Yes",
+    Command: "bash -c 'printf \"\\n  \\033[2m☐ Available — no agent attached\\033[0m\\n\\n\" && cat'",
+    "Silence Bell": true,
   };
-  writeFileSync(EMPTY_PANE_PROFILE_FILE, JSON.stringify(profile, null, 2));
+  if (opts?.backgroundImage) {
+    profile["Background Image Location"] = opts.backgroundImage;
+    profile["Blend"] = opts.blend ?? DEFAULT_BLEND;
+  }
+  writeFileSync(
+    EMPTY_PANE_PROFILE_FILE,
+    JSON.stringify({ Profiles: [profile] }, null, 2),
+  );
 }
 
 /**
  * Split the current pane using the "Crew Empty Pane" profile.
+ * Optionally set a background image with blend.
  * Returns the new session's ID.
  */
 export async function splitPaneEmpty(
   direction: "horizontal" | "vertical",
+  opts?: { backgroundImage?: string; blend?: number },
 ): Promise<string> {
-  ensureEmptyPaneProfile();
+  writeEmptyPaneProfile(opts);
+  // Small delay for iTerm2 to pick up profile changes
+  await new Promise((r) => setTimeout(r, 200));
   const verb = direction === "horizontal" ? "horizontally" : "vertically";
   return osascript(`
     tell application "iTerm2"
@@ -356,13 +368,16 @@ export async function splitPaneEmpty(
 
 /**
  * Split a specific session using the "Crew Empty Pane" profile.
+ * Optionally set a background image with blend.
  * Returns the new session's ID.
  */
 export async function splitSessionEmpty(
   sessionId: string,
   direction: "horizontal" | "vertical",
+  opts?: { backgroundImage?: string; blend?: number },
 ): Promise<string> {
-  ensureEmptyPaneProfile();
+  writeEmptyPaneProfile(opts);
+  await new Promise((r) => setTimeout(r, 200));
   const verb = direction === "horizontal" ? "horizontally" : "vertically";
   return osascript(`
     tell application "iTerm2"
