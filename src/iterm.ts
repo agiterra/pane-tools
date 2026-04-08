@@ -328,7 +328,7 @@ export function writeEmptyPaneProfile(opts?: {
     Name: EMPTY_PANE_PROFILE_NAME,
     Guid: "crew-empty-pane-001",
     "Custom Command": "Yes",
-    Command: "bash -c 'printf \"\\n  \\033[2m☐ Available — no agent attached\\033[0m\\n\\n\" && exec bash'",
+    Command: "zsh -c 'printf \"\\n  \\033[2m☐ Available — no agent attached\\033[0m\\n\\n\" && exec zsh -l'",
     "Silence Bell": true,
   };
   if (opts?.backgroundImage) {

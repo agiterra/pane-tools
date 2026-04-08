@@ -205,8 +205,10 @@ export class Orchestrator {
     // Detach the agent's screen from wherever it currently is
     await screen.detachSession(agent.screen_name);
 
-    // Attach screen session to the iTerm2 pane
-    await iterm.writeToSession(pane.iterm_id, `screen -r ${agent.screen_name}`);
+    // Attach screen session to the iTerm2 pane.
+    // Use -x (multi-display) to handle edge cases where -r fails.
+    // Use full path to screen binary to avoid PATH issues in non-login shells.
+    await iterm.writeToSession(pane.iterm_id, `screen -x ${agent.screen_name}`);
     this.store.updateAgentPane(agentId, paneName);
   }
 
