@@ -11,7 +11,7 @@ import * as screen from "./screen.js";
 import * as iterm from "./iterm.js";
 import { getLaunchCommand } from "./runtimes.js";
 import { reconcile, formatReport } from "./reconciler.js";
-import { pickName } from "./themes.js";
+import { pickName, backgroundImagePath } from "./themes.js";
 
 const DEFAULT_DB = join(process.env.HOME ?? "/tmp", ".wire", "crews.db");
 const SCREEN_PREFIX = "wire-";
@@ -396,7 +396,8 @@ export class Orchestrator {
       ? "vertical"
       : "horizontal";
 
-    // Split relative to a named pane, raw UUID, or fall back to current
+    // Split relative to a named pane, raw UUID, or fall back to current.
+    // Use the "Crew Empty Pane" profile for a clean placeholder.
     let itermId: string;
     if (relativeTo) {
       const resolvedId = this.resolveSession(relativeTo);
@@ -407,14 +408,24 @@ export class Orchestrator {
           `Re-register the pane or omit relative_to to split the caller's pane.`
         );
       }
-      itermId = await iterm.splitSession(resolvedId, direction);
+      itermId = await iterm.splitSessionEmpty(resolvedId, direction);
     } else {
-      itermId = await iterm.splitPane(direction);
+      itermId = await iterm.splitPaneEmpty(direction);
     }
 
     const pane = this.store.createPane(paneName, tab, position);
     this.store.setPaneItermId(paneName, itermId);
     await iterm.setSessionName(itermId, titleCase(paneName));
+
+    // Set themed background image if available
+    const tabRow = this.store.getTab(tab);
+    if (tabRow?.theme) {
+      const bgPath = backgroundImagePath(tabRow.theme, paneName);
+      if (bgPath) {
+        await iterm.setBackgroundImage(itermId, bgPath);
+      }
+    }
+
     return { ...pane, iterm_id: itermId };
   }
 

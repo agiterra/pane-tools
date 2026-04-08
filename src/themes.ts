@@ -73,3 +73,20 @@ export function pickName(theme: string, usedNames: string[]): string | null {
 export function isValidTheme(theme: string): boolean {
   return theme in POOLS;
 }
+
+/**
+ * Resolve background image path for a themed pane.
+ * Images live at ~/.wire/themes/<theme>/<name>.jpg
+ * Returns null if the image doesn't exist.
+ */
+export function backgroundImagePath(theme: string, name: string): string | null {
+  const { existsSync } = require("fs");
+  const { join } = require("path");
+  const base = join(process.env.HOME ?? "/tmp", ".wire", "themes", theme);
+  // Check for common extensions
+  for (const ext of ["jpg", "jpeg", "png", "webp"]) {
+    const path = join(base, `${name}.${ext}`);
+    if (existsSync(path)) return path;
+  }
+  return null;
+}

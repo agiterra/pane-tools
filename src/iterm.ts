@@ -274,7 +274,34 @@ export async function setBadge(sessionId: string, text: string): Promise<void> {
   `);
 }
 
-// --- Web Browser Panes ---
+// --- Background Images ---
+
+/**
+ * Set the background image for a specific session.
+ * Uses iTerm2's proprietary escape sequence (OSC 1337).
+ */
+export async function setBackgroundImage(
+  sessionId: string,
+  imagePath: string,
+): Promise<void> {
+  const escaped = imagePath.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  await osascript(`
+    tell application "iTerm2"
+      repeat with w in windows
+        repeat with t in tabs of w
+          repeat with s in sessions of t
+            if id of s is "${sessionId}" then
+              tell s to set background image to "${escaped}"
+              return
+            end if
+          end repeat
+        end repeat
+      end repeat
+    end tell
+  `);
+}
+
+// --- Dynamic Profiles ---
 
 const DYNAMIC_PROFILES_DIR = join(
   process.env.HOME ?? "/tmp",
@@ -282,6 +309,79 @@ const DYNAMIC_PROFILES_DIR = join(
 );
 const BROWSER_PROFILE_FILE = join(DYNAMIC_PROFILES_DIR, "crew-web-browser.json");
 const BROWSER_PROFILE_NAME = "Pane Web Browser";
+const EMPTY_PANE_PROFILE_FILE = join(DYNAMIC_PROFILES_DIR, "crew-empty-pane.json");
+const EMPTY_PANE_PROFILE_NAME = "Crew Empty Pane";
+
+/**
+ * Ensure the "Crew Empty Pane" dynamic profile exists.
+ * This profile runs a placeholder message instead of a shell.
+ * When an agent attaches via `screen -r`, it takes over the session.
+ */
+export function ensureEmptyPaneProfile(): void {
+  mkdirSync(DYNAMIC_PROFILES_DIR, { recursive: true });
+  const profile = {
+    Profiles: [
+      {
+        Name: EMPTY_PANE_PROFILE_NAME,
+        Guid: "crew-empty-pane-001",
+        "Custom Command": "Yes",
+        Command: "bash -c 'printf \"\\n  \\033[2m☐ Available — no agent attached\\033[0m\\n\\n\" && cat'",
+        "Silence Bell": true,
+      },
+    ],
+  };
+  writeFileSync(EMPTY_PANE_PROFILE_FILE, JSON.stringify(profile, null, 2));
+}
+
+/**
+ * Split the current pane using the "Crew Empty Pane" profile.
+ * Returns the new session's ID.
+ */
+export async function splitPaneEmpty(
+  direction: "horizontal" | "vertical",
+): Promise<string> {
+  ensureEmptyPaneProfile();
+  const verb = direction === "horizontal" ? "horizontally" : "vertically";
+  return osascript(`
+    tell application "iTerm2"
+      tell current session of current tab of current window
+        set newSession to split ${verb} with profile "${EMPTY_PANE_PROFILE_NAME}"
+        tell newSession
+          return id
+        end tell
+      end tell
+    end tell
+  `);
+}
+
+/**
+ * Split a specific session using the "Crew Empty Pane" profile.
+ * Returns the new session's ID.
+ */
+export async function splitSessionEmpty(
+  sessionId: string,
+  direction: "horizontal" | "vertical",
+): Promise<string> {
+  ensureEmptyPaneProfile();
+  const verb = direction === "horizontal" ? "horizontally" : "vertically";
+  return osascript(`
+    tell application "iTerm2"
+      repeat with w in windows
+        repeat with t in tabs of w
+          repeat with s in sessions of t
+            if id of s is "${sessionId}" then
+              tell s
+                set newSession to split ${verb} with profile "${EMPTY_PANE_PROFILE_NAME}"
+              end tell
+              return id of newSession
+            end if
+          end repeat
+        end repeat
+      end repeat
+      error "session not found: ${sessionId}"
+    end tell
+  `);
+}
 
 /**
  * Write a dynamic profile for the web browser pane with the given URL.
