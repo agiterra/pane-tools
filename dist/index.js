@@ -724,7 +724,7 @@ function formatReport(result, agents) {
 }
 
 // src/themes.ts
-import { existsSync as existsSync2, readFileSync as readFileSync2, readdirSync } from "fs";
+import { existsSync as existsSync2, readFileSync as readFileSync2, readdirSync, writeFileSync as writeFileSync2 } from "fs";
 import { join as join4 } from "path";
 function resolveThemeDir(theme) {
   const crewDir = join4(CREW_THEMES_DIR, theme);
@@ -749,6 +749,33 @@ function loadTheme(theme) {
     }
   }
   return synthesizeLegacyTheme(theme);
+}
+function saveTheme(config) {
+  const dir = resolveThemeDir(config.name) ?? join4(WIRE_THEMES_DIR, config.name);
+  const jsonPath = join4(dir, "theme.json");
+  const out = {
+    name: config.name,
+    ...config.description && { description: config.description },
+    ...config.author && { author: config.author },
+    ...config.version && { version: config.version },
+    pool: config.pool,
+    background: config.background
+  };
+  writeFileSync2(jsonPath, JSON.stringify(out, null, 2) + "\n");
+}
+function updateTheme(theme, updates) {
+  const config = loadTheme(theme);
+  if (!config)
+    return null;
+  if (updates.blend !== undefined)
+    config.background.blend = updates.blend;
+  if (updates.mode !== undefined)
+    config.background.mode = updates.mode;
+  if (updates.images) {
+    config.background.images = { ...config.background.images, ...updates.images };
+  }
+  saveTheme(config);
+  return config;
 }
 function validateTheme(raw, fallbackName) {
   const name = raw.name ?? fallbackName;
@@ -1319,6 +1346,33 @@ class Orchestrator {
     this.store.setPaneItermId(paneName, itermId);
     return { pane: { ...pane, iterm_id: itermId }, url: opts.url };
   }
+  async updateThemeAndRebuild(themeName, updates) {
+    const config = updateTheme(themeName, updates);
+    if (!config)
+      throw new Error(`theme '${themeName}' not found`);
+    const allPanes = this.store.listPanes();
+    const affected = allPanes.filter((p) => p.theme === themeName);
+    const updated = [];
+    const errors = [];
+    for (const oldPane of affected) {
+      try {
+        const occupant = this.store.listAgents().find((a) => a.pane === oldPane.name);
+        if (occupant) {
+          await detachSession(occupant.screen_name);
+          this.store.updateAgentPane(occupant.id, null);
+        }
+        const newPane = await this.createPane(oldPane.tab, undefined, oldPane.position, oldPane.name);
+        await this.closePane(oldPane.name);
+        if (occupant) {
+          await this.attachAgent(occupant.id, newPane.name);
+        }
+        updated.push(`${oldPane.name} \u2192 ${newPane.name}`);
+      } catch (e) {
+        errors.push(`${oldPane.name}: ${e.message}`);
+      }
+    }
+    return { updated, errors };
+  }
   async reconcile() {
     const result = await reconcile(this.store);
     const agents = this.store.listAgents();
@@ -1326,7 +1380,9 @@ class Orchestrator {
   }
 }
 export {
+  updateTheme,
   exports_screen as screen,
+  saveTheme,
   resolveThemeDir,
   reconcile,
   pickName,

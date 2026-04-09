@@ -11,7 +11,7 @@
  * pool, excluding names already in use.
  */
 
-import { existsSync, readFileSync, readdirSync } from "fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { join } from "path";
 
 // --- Theme config type ---
@@ -121,6 +121,50 @@ export function loadTheme(theme: string): ThemeConfig | null {
 
   // No theme.json — synthesize from legacy structure
   return synthesizeLegacyTheme(theme);
+}
+
+/**
+ * Save a theme config to disk as theme.json.
+ * Writes to the directory where the theme was loaded from.
+ * If the theme doesn't exist on disk yet, writes to ~/.wire/themes/{name}/.
+ */
+export function saveTheme(config: ThemeConfig): void {
+  const dir = resolveThemeDir(config.name) ?? join(WIRE_THEMES_DIR, config.name);
+  const jsonPath = join(dir, "theme.json");
+  const out: any = {
+    name: config.name,
+    ...(config.description && { description: config.description }),
+    ...(config.author && { author: config.author }),
+    ...(config.version && { version: config.version }),
+    pool: config.pool,
+    background: config.background,
+  };
+  writeFileSync(jsonPath, JSON.stringify(out, null, 2) + "\n");
+}
+
+/**
+ * Update specific fields of a theme and save.
+ * Returns the updated config.
+ */
+export function updateTheme(
+  theme: string,
+  updates: {
+    blend?: number;
+    mode?: number;
+    images?: Record<string, string>;
+  },
+): ThemeConfig | null {
+  const config = loadTheme(theme);
+  if (!config) return null;
+
+  if (updates.blend !== undefined) config.background.blend = updates.blend;
+  if (updates.mode !== undefined) config.background.mode = updates.mode;
+  if (updates.images) {
+    config.background.images = { ...config.background.images, ...updates.images };
+  }
+
+  saveTheme(config);
+  return config;
 }
 
 /**

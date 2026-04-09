@@ -11,7 +11,7 @@ import * as screen from "./screen.js";
 import * as iterm from "./iterm.js";
 import { getLaunchCommand } from "./runtimes.js";
 import { reconcile, formatReport } from "./reconciler.js";
-import { pickName, backgroundImagePath, loadTheme } from "./themes.js";
+import { pickName, backgroundImagePath, loadTheme, updateTheme } from "./themes.js";
 
 const DEFAULT_DB = join(process.env.HOME ?? "/tmp", ".wire", "crews.db");
 const SCREEN_PREFIX = "wire-";
@@ -562,6 +562,66 @@ export class Orchestrator {
     this.store.setPaneItermId(paneName, itermId);
 
     return { pane: { ...pane, iterm_id: itermId }, url: opts.url };
+  }
+
+  // --- Theme updates ---
+
+  /**
+   * Update a theme's settings (blend, mode, images) and rebuild all live
+   * panes using that theme. For each affected pane:
+   *   1. Create new themed pane (relative to old — preserves position)
+   *   2. Move any attached agent to the new pane
+   *   3. Close the old pane
+   */
+  async updateThemeAndRebuild(
+    themeName: string,
+    updates: { blend?: number; mode?: number; images?: Record<string, string> },
+  ): Promise<{ updated: string[]; errors: string[] }> {
+    // Update theme.json on disk
+    const config = updateTheme(themeName, updates);
+    if (!config) throw new Error(`theme '${themeName}' not found`);
+
+    // Find all live panes using this theme
+    const allPanes = this.store.listPanes();
+    const affected = allPanes.filter((p) => p.theme === themeName);
+
+    const updated: string[] = [];
+    const errors: string[] = [];
+
+    for (const oldPane of affected) {
+      try {
+        // Find agent in old pane (if any)
+        const occupant = this.store.listAgents().find((a) => a.pane === oldPane.name);
+
+        // Detach agent from old pane
+        if (occupant) {
+          await screen.detachSession(occupant.screen_name);
+          this.store.updateAgentPane(occupant.id, null);
+        }
+
+        // Create new pane relative to old (preserves position)
+        const newPane = await this.createPane(
+          oldPane.tab,
+          undefined,
+          oldPane.position,
+          oldPane.name,
+        );
+
+        // Close old pane (must happen after create so position is preserved)
+        await this.closePane(oldPane.name);
+
+        // Reattach agent to new pane
+        if (occupant) {
+          await this.attachAgent(occupant.id, newPane.name);
+        }
+
+        updated.push(`${oldPane.name} → ${newPane.name}`);
+      } catch (e: any) {
+        errors.push(`${oldPane.name}: ${e.message}`);
+      }
+    }
+
+    return { updated, errors };
   }
 
   // --- Reconciler ---
