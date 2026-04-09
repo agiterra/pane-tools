@@ -506,20 +506,21 @@ function writePaneProfile(paneName, backgroundImage, opts) {
     unlinkSync(profileFile);
   } catch {
   }
-  const profile = {
-    Profiles: [
-      {
-        Name: profileName,
-        Guid: guid,
-        "Custom Command": "Yes",
-        Command: `zsh -c 'printf "\\n  \\033[2m\u2610 Available \u2014 no agent attached\\033[0m\\n\\n" && exec zsh -l'`,
-        "Silence Bell": true,
-        "Background Image Location": backgroundImage,
-        Blend: opts?.blend ?? 0.5,
-        "Background Image Mode": opts?.mode ?? 2
-      }
-    ]
+  const profileEntry = {
+    Name: profileName,
+    Guid: guid,
+    "Custom Command": "Yes",
+    Command: `zsh -c 'printf "\\n  \\033[2m\u2610 Available \u2014 no agent attached\\033[0m\\n\\n" && exec zsh -l'`,
+    "Silence Bell": true,
+    "Background Image Location": backgroundImage,
+    Blend: opts?.blend ?? 0.5,
+    "Background Image Mode": opts?.mode ?? 2
   };
+  if (opts?.tabTitle) {
+    profileEntry["Custom Tab Title"] = opts.tabTitle;
+    profileEntry["Title Components"] = 8;
+  }
+  const profile = { Profiles: [profileEntry] };
   writeFileSync(profileFile, JSON.stringify(profile, null, 2));
   return profileName;
 }
@@ -1290,7 +1291,8 @@ class Orchestrator {
     const bgPath = tabRow?.theme ? backgroundImagePath(tabRow.theme, paneName, theme) : null;
     const profileName = bgPath ? writePaneProfile(paneName, bgPath, {
       blend: theme?.background.blend,
-      mode: theme?.background.mode
+      mode: theme?.background.mode,
+      tabTitle: titleCase(tab)
     }) : (writeEmptyPaneProfile(), "Crew Empty Pane");
     await new Promise((r) => setTimeout(r, 300));
     let itermId;
@@ -1307,7 +1309,6 @@ class Orchestrator {
     const pane = this.store.createPane(paneName, tab, position, tabRow?.theme ?? undefined);
     this.store.setPaneItermId(paneName, itermId);
     await setSessionName(itermId, titleCase(paneName));
-    await setTabName(itermId, titleCase(tab));
     return { ...pane, iterm_id: itermId };
   }
   nextPaneName(tab) {

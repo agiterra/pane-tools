@@ -227,25 +227,15 @@ export async function setSessionName(sessionId: string, name: string): Promise<v
 
 /**
  * Set the name of the tab containing a specific session.
- * Uses the escape sequence ESC ] 1 ; title BEL which sets the tab title
- * in iTerm2. AppleScript's `set name` on tabs doesn't work.
+ *
+ * KNOWN LIMITATION: iTerm2 3.6.9 does not expose a writable `name` property
+ * on tabs in its AppleScript dictionary. Escape sequences (ESC ] 1) work but
+ * require "Allow Title Setting" enabled in the profile, and Claude Code
+ * constantly overwrites session titles which derive the tab title.
+ * This function is currently a no-op. See agiterra/crew-tools#tab-title.
  */
-export async function setTabName(sessionId: string, name: string): Promise<void> {
-  const escaped = name.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/'/g, "'\\''");
-  await osascript(`
-    tell application "iTerm2"
-      repeat with w in windows
-        repeat with t in tabs of w
-          repeat with s in sessions of t
-            if id of s is "${sessionId}" then
-              tell s to write text "printf '\\e]1;${escaped}\\a'"
-              return
-            end if
-          end repeat
-        end repeat
-      end repeat
-    end tell
-  `);
+export async function setTabName(_sessionId: string, _name: string): Promise<void> {
+  // No-op — see docstring above.
 }
 
 // --- Badges ---
@@ -303,20 +293,18 @@ export function writePaneProfile(
   // Delete first to force iTerm2 to re-read (prevents stale cache on name reuse)
   try { unlinkSync(profileFile); } catch {}
 
-  const profile = {
-    Profiles: [
-      {
-        Name: profileName,
-        Guid: guid,
-        "Custom Command": "Yes",
-        Command: "zsh -c 'printf \"\\n  \\033[2m☐ Available — no agent attached\\033[0m\\n\\n\" && exec zsh -l'",
-        "Silence Bell": true,
-        "Background Image Location": backgroundImage,
-        "Blend": opts?.blend ?? 0.5,
-        "Background Image Mode": opts?.mode ?? 2,
-      },
-    ],
+  const profileEntry: Record<string, any> = {
+    Name: profileName,
+    Guid: guid,
+    "Custom Command": "Yes",
+    Command: "zsh -c 'printf \"\\n  \\033[2m☐ Available — no agent attached\\033[0m\\n\\n\" && exec zsh -l'",
+    "Silence Bell": true,
+    "Background Image Location": backgroundImage,
+    "Blend": opts?.blend ?? 0.5,
+    "Background Image Mode": opts?.mode ?? 2,
   };
+
+  const profile = { Profiles: [profileEntry] };
   writeFileSync(profileFile, JSON.stringify(profile, null, 2));
   return profileName;
 }
