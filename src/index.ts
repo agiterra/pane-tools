@@ -5,3 +5,4 @@ export * as iterm from "./iterm.js";
 export { loadRuntimes, getLaunchCommand, expandCommand, type RuntimeConfig } from "./runtimes.js";
 export { reconcile, formatReport, type ReconcileResult } from "./reconciler.js";
 export { pickName, isValidTheme, THEME_NAMES, backgroundImagePath, loadTheme, listThemes, resolveThemeDir, saveTheme, updateTheme, type ThemeConfig } from "./themes.js";
+export { startServer } from "./mcp-server.js";
