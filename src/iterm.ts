@@ -227,16 +227,18 @@ export async function setSessionName(sessionId: string, name: string): Promise<v
 
 /**
  * Set the name of the tab containing a specific session.
+ * Uses the escape sequence ESC ] 1 ; title BEL which sets the tab title
+ * in iTerm2. AppleScript's `set name` on tabs doesn't work.
  */
 export async function setTabName(sessionId: string, name: string): Promise<void> {
-  const escaped = name.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  const escaped = name.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/'/g, "'\\''");
   await osascript(`
     tell application "iTerm2"
       repeat with w in windows
         repeat with t in tabs of w
           repeat with s in sessions of t
             if id of s is "${sessionId}" then
-              tell t to set name to "${escaped}"
+              tell s to write text "printf '\\e]1;${escaped}\\a'"
               return
             end if
           end repeat

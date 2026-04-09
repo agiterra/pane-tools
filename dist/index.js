@@ -461,14 +461,14 @@ async function setSessionName(sessionId, name) {
   `);
 }
 async function setTabName(sessionId, name) {
-  const escaped = name.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  const escaped = name.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/'/g, "'\\''");
   await osascript(`
     tell application "iTerm2"
       repeat with w in windows
         repeat with t in tabs of w
           repeat with s in sessions of t
             if id of s is "${sessionId}" then
-              tell t to set name to "${escaped}"
+              tell s to write text "printf '\\e]1;${escaped}\\a'"
               return
             end if
           end repeat
@@ -1307,6 +1307,7 @@ class Orchestrator {
     const pane = this.store.createPane(paneName, tab, position, tabRow?.theme ?? undefined);
     this.store.setPaneItermId(paneName, itermId);
     await setSessionName(itermId, titleCase(paneName));
+    await setTabName(itermId, titleCase(tab));
     return { ...pane, iterm_id: itermId };
   }
   nextPaneName(tab) {

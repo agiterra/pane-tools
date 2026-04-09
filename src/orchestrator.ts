@@ -486,6 +486,10 @@ export class Orchestrator {
     const pane = this.store.createPane(paneName, tab, position, tabRow?.theme ?? undefined);
     this.store.setPaneItermId(paneName, itermId);
     await iterm.setSessionName(itermId, titleCase(paneName));
+
+    // Set the tab title (via escape sequence) so the iTerm2 tab bar shows the tab name
+    await iterm.setTabName(itermId, titleCase(tab));
+
     return { ...pane, iterm_id: itermId };
   }
 
