@@ -301,6 +301,7 @@ export function writePaneProfile(
   opts?: {
     blend?: number;
     mode?: number;
+    badgeColor?: { r: number; g: number; b: number; a?: number };
   },
 ): string {
   const profileName = `Crew ${paneName}`;
@@ -320,13 +321,13 @@ export function writePaneProfile(
     "Background Image Location": backgroundImage,
     "Blend": opts?.blend ?? 0.5,
     "Background Image Mode": opts?.mode ?? 2,
-    // Warm amber badge — high contrast against most background images,
-    // readable on dark terminals, not red (per Tim's preference).
+    // Per-image badge color (from theme.badgeColors[paneName] or defaultBadgeColor)
+    // falling back to a neutral warm amber that reads well on most dark backgrounds.
     "Badge Color": {
-      "Red Component": 1,
-      "Green Component": 0.75,
-      "Blue Component": 0.25,
-      "Alpha Component": 0.85,
+      "Red Component": opts?.badgeColor?.r ?? 1,
+      "Green Component": opts?.badgeColor?.g ?? 0.75,
+      "Blue Component": opts?.badgeColor?.b ?? 0.25,
+      "Alpha Component": opts?.badgeColor?.a ?? 0.85,
       "Color Space": "sRGB",
     },
     // Constrain badge size — iTerm2's default is 50% width / 20% height

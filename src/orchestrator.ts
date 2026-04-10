@@ -400,6 +400,7 @@ export class Orchestrator {
           profileName = iterm.writePaneProfile(picked, bgPath, {
             blend: themeConfig.background.blend,
             mode: themeConfig.background.mode,
+            badgeColor: themeConfig.badgeColors?.[picked] ?? themeConfig.defaultBadgeColor,
           });
           // Brief delay for iTerm2 to pick up the dynamic profile
           await new Promise((r) => setTimeout(r, 300));
@@ -502,6 +503,7 @@ export class Orchestrator {
       ? iterm.writePaneProfile(paneName, bgPath, {
           blend: theme?.background.blend,
           mode: theme?.background.mode,
+          badgeColor: theme?.badgeColors?.[paneName] ?? theme?.defaultBadgeColor,
         })
       : (iterm.writeEmptyPaneProfile(), "Crew Empty Pane");
 

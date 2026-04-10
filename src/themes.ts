@@ -16,6 +16,14 @@ import { join } from "path";
 
 // --- Theme config type ---
 
+/** RGBA color for iTerm2 profile settings. Components in 0..1 range. */
+export type ThemeColor = {
+  r: number;
+  g: number;
+  b: number;
+  a?: number;
+};
+
 export type ThemeConfig = {
   name: string;
   description?: string;
@@ -31,6 +39,10 @@ export type ThemeConfig = {
     /** Map of pane name → image filename (relative to theme dir). "default" key is fallback. */
     images: Record<string, string>;
   };
+  /** Optional per-pane badge color overrides. Key = pane name. */
+  badgeColors?: Record<string, ThemeColor>;
+  /** Optional theme-wide default badge color (used when a pane has no specific override). */
+  defaultBadgeColor?: ThemeColor;
 };
 
 // --- Theme directories ---
