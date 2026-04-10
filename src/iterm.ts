@@ -9,7 +9,6 @@
  * and iTerm2 picks it up automatically.
  */
 
-import { $ } from "bun";
 import { writeFileSync, mkdirSync, unlinkSync } from "fs";
 import { join } from "path";
 
@@ -17,8 +16,14 @@ import { join } from "path";
  * Run AppleScript and return trimmed stdout.
  */
 async function osascript(script: string): Promise<string> {
-  const result = await $`osascript -e ${script}`.quiet();
-  return result.stdout.toString().trim();
+  const proc = Bun.spawn(["osascript", "-e", script], { stdout: "pipe", stderr: "pipe" });
+  const stdout = await new Response(proc.stdout).text();
+  const exitCode = await proc.exited;
+  if (exitCode !== 0) {
+    const stderr = await new Response(proc.stderr).text();
+    throw new Error(`osascript failed (exit ${exitCode}): ${stderr.trim()}`);
+  }
+  return stdout.trim();
 }
 
 /**
@@ -161,12 +166,16 @@ export async function closeSession(sessionId: string): Promise<void> {
 
 /**
  * Create a new tab in the current window. Returns the session ID.
+ * Optionally uses a named profile (for themed backgrounds).
  */
-export async function createItermTab(): Promise<string> {
+export async function createItermTab(profileName?: string): Promise<string> {
+  const profileClause = profileName
+    ? `profile "${profileName.replace(/"/g, '\\"')}"`
+    : `default profile`;
   return osascript(`
     tell application "iTerm2"
       tell current window
-        set newTab to (create tab with default profile)
+        set newTab to (create tab with ${profileClause})
         tell current session of newTab
           return id
         end tell
@@ -245,7 +254,8 @@ export async function setTabName(_sessionId: string, _name: string): Promise<voi
  * Badges are overlay text shown in the corner of the pane.
  */
 export async function setBadge(sessionId: string, text: string): Promise<void> {
-  const escaped = text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  // Escape for AppleScript: backslashes, quotes, then convert real newlines to literal \n
+  const escaped = text.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "");
   // Set custom variable AND badge format so CC can't clobber it
   await osascript(`
     tell application "iTerm2"

@@ -11,7 +11,7 @@ import * as screen from "./screen.js";
 import * as iterm from "./iterm.js";
 import { getLaunchCommand } from "./runtimes.js";
 import { reconcile, formatReport } from "./reconciler.js";
-import { pickName, backgroundImagePath, loadTheme, updateTheme } from "./themes.js";
+import { pickName, backgroundImagePath, loadTheme, updateTheme, listThemes } from "./themes.js";
 
 const DEFAULT_DB = join(process.env.HOME ?? "/tmp", ".wire", "crews.db");
 const SCREEN_PREFIX = "wire-";
@@ -376,9 +376,49 @@ export class Orchestrator {
 
   // --- Tabs ---
 
-  async createTab(name: string, theme?: string): Promise<Tab> {
-    const itermSessionId = await iterm.createItermTab();
-    return this.store.createTab(name, theme, itermSessionId);
+  async createTab(name: string, theme?: string): Promise<Tab & { pane?: Pane }> {
+    // Resolve theme: explicit → first unused → first available
+    let resolvedTheme = theme;
+    if (!resolvedTheme) {
+      const available = listThemes();
+      const usedThemes = new Set(this.store.listTabs().map((t) => t.theme).filter(Boolean));
+      resolvedTheme = available.find((t) => !usedThemes.has(t)) ?? available[0];
+    }
+
+    // Pick a pane name from the theme pool and write the profile so the
+    // auto-created tab session shows the themed background from the start.
+    let profileName: string | undefined;
+    let paneName: string | undefined;
+    if (resolvedTheme) {
+      const themeConfig = loadTheme(resolvedTheme);
+      const usedNames = this.store.listPanes().map((p) => p.name);
+      const picked = pickName(resolvedTheme, usedNames);
+      if (picked && themeConfig) {
+        paneName = picked;
+        const bgPath = backgroundImagePath(resolvedTheme, picked, themeConfig);
+        if (bgPath) {
+          profileName = iterm.writePaneProfile(picked, bgPath, {
+            blend: themeConfig.background.blend,
+            mode: themeConfig.background.mode,
+          });
+          // Brief delay for iTerm2 to pick up the dynamic profile
+          await new Promise((r) => setTimeout(r, 300));
+        }
+      }
+    }
+
+    const itermSessionId = await iterm.createItermTab(profileName);
+    const tab = this.store.createTab(name, resolvedTheme, itermSessionId);
+
+    // Register the auto-created pane if we named it from the theme
+    let pane: Pane | undefined;
+    if (paneName) {
+      pane = this.store.createPane(paneName, name, "below", resolvedTheme);
+      this.store.setPaneItermId(paneName, itermSessionId);
+      await iterm.setSessionName(itermSessionId, titleCase(paneName));
+    }
+
+    return { ...tab, pane };
   }
 
   setTabTheme(name: string, theme: string): void {
