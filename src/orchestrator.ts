@@ -220,7 +220,19 @@ export class Orchestrator {
     await this.terminal.writeToSession(pane.iterm_id, `screen -x ${agent.screen_name}`);
     this.store.updateAgentPane(agentId, resolvedPane);
 
-    // Apply the agent's badge to the pane (color from pane's profile, text from agent)
+    // Flash the tab and notify — agent is now visible.
+    // On cmux these are native; on iTerm2 flash is a no-op and notify
+    // falls back to setBadge, so the agent badge below must run AFTER
+    // to reclaim the badge slot.
+    try {
+      await this.terminal.flashSession(pane.iterm_id);
+      await this.terminal.notifySession(pane.iterm_id, `${agent.display_name} attached`, `→ pane ${resolvedPane}`);
+    } catch (e) {
+      console.error(`[crew] attach flash/notify failed for '${agentId}' on '${resolvedPane}':`, e);
+    }
+
+    // Apply the agent's badge to the pane (color from pane's profile, text from agent).
+    // Runs AFTER notifySession so it wins on iTerm2 (where notify falls back to setBadge).
     if (agent.badge) {
       try {
         await this.terminal.setBadge(pane.iterm_id, agent.badge);
@@ -390,6 +402,21 @@ export class Orchestrator {
     await this.terminal.setBadge(pane.iterm_id, text);
   }
 
+  // --- Notifications ---
+
+  /**
+   * Flash a pane's tab and send a notification.
+   * On cmux: triggers the notification ring + desktop notification.
+   * On iTerm2: sets the badge text (best effort).
+   */
+  async notifyPane(paneName: string, title: string, body?: string): Promise<void> {
+    const pane = this.store.getPane(paneName);
+    if (!pane) throw new Error(`pane '${paneName}' not found`);
+    if (!pane.iterm_id) throw new Error(`pane '${paneName}' has no terminal session`);
+    await this.terminal.flashSession(pane.iterm_id);
+    await this.terminal.notifySession(pane.iterm_id, title, body);
+  }
+
   // --- Interrupt ---
 
   /**
@@ -461,6 +488,9 @@ export class Orchestrator {
       this.store.setPaneItermId(paneName, sessionId);
       await this.terminal.setSessionName(sessionId, titleCase(paneName));
     }
+
+    // Name the workspace/tab (cmux: renames workspace; iTerm2: no-op)
+    await this.terminal.renameWorkspace(sessionId, name);
 
     return { ...tab, pane };
   }
