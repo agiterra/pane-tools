@@ -67,9 +67,11 @@ export class CrewStore {
         runtime TEXT NOT NULL DEFAULT 'claude-code',
         screen_name TEXT NOT NULL,
         screen_pid INTEGER,
+        cc_session_id TEXT,
         pane TEXT REFERENCES panes(name),
         status_name TEXT,
         status_desc TEXT,
+        badge TEXT,
         launched_at INTEGER NOT NULL,
         last_seen INTEGER NOT NULL
       );
@@ -152,11 +154,12 @@ export class CrewStore {
           pane TEXT REFERENCES panes(name),
           status_name TEXT,
           status_desc TEXT,
+          badge TEXT,
           launched_at INTEGER NOT NULL,
           last_seen INTEGER NOT NULL
         );
         INSERT INTO agents_new SELECT id, display_name, runtime, screen_name, screen_pid,
-          cc_session_id, pane, status_name, status_desc, launched_at, last_seen FROM agents;
+          cc_session_id, pane, status_name, status_desc, badge, launched_at, last_seen FROM agents;
         DROP TABLE agents;
         ALTER TABLE agents_new RENAME TO agents;
         CREATE INDEX IF NOT EXISTS idx_agents_id ON agents(id);
