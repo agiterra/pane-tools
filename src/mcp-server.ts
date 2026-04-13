@@ -15,7 +15,7 @@ import {
 import { Orchestrator } from "./orchestrator.js";
 import { createBackend } from "./terminal.js";
 import { listThemes, loadTheme, resolveThemeDir } from "./themes.js";
-import { generateKeyPair, exportPrivateKey, importKeyPair, register, setPlan } from "@agiterra/wire-tools";
+import { getClaudeCodeSessionId } from "./claude-session.js";
 import { execSync } from "child_process";
 
 /**
@@ -27,7 +27,7 @@ export async function startServer(): Promise<void> {
   const terminalName = terminal.name;
   const CALLER_AGENT_ID =
     process.env.CREW_AGENT_ID ?? process.env.WIRE_AGENT_ID ?? "unknown";
-  let keyPair: { publicKey: string; privateKey: CryptoKey } | null = null;
+  const ccSessionId = getClaudeCodeSessionId();
 
   /**
    * Detect the caller's terminal session ID.
@@ -395,34 +395,12 @@ export async function startServer(): Promise<void> {
 
       switch (name) {
         case "agent_launch": {
-          const agentId = a.id as string;
-          const displayName = a.name as string;
-          const wireUrl = process.env.WIRE_URL ?? "http://localhost:9800";
-
-          let privateKeyB64: string | undefined;
-          const agentsRes = await fetch(`${wireUrl}/agents`);
-          const agents = await agentsRes.json() as any[];
-          const existing = agents.find((ag: any) => ag.id === agentId);
-
-          if (existing?.permanent) {
-            // Permanent agent manages its own keys
-          } else {
-            if (!keyPair) throw new Error("no signing key — cannot pre-register agent");
-            const newKp = await generateKeyPair();
-            await register(wireUrl, CALLER_AGENT_ID, agentId, displayName, newKp.publicKey, keyPair.privateKey);
-            if (a.plan) {
-              await setPlan(wireUrl, agentId, a.plan as string, newKp.privateKey);
-            }
-            privateKeyB64 = await exportPrivateKey(newKp.privateKey);
-          }
-
           result = await orchestrator.launchAgent({
-            id: agentId,
-            displayName,
+            id: a.id as string,
+            displayName: a.name as string,
             runtime: a.runtime as string | undefined,
             projectDir: a.project_dir as string | undefined,
             extraFlags: a.extra_flags as string | undefined,
-            privateKeyB64,
             prompt: a.prompt as string | undefined,
             badge: a.badge as string | undefined,
           });
@@ -573,18 +551,6 @@ export async function startServer(): Promise<void> {
     }
   });
 
-  // Load signing key (CREW_PRIVATE_KEY for spawned agents, WIRE_PRIVATE_KEY for permanent)
-  const rawKey = process.env.CREW_PRIVATE_KEY ?? process.env.WIRE_PRIVATE_KEY;
-  if (rawKey) {
-    try {
-      keyPair = await importKeyPair(rawKey);
-    } catch (e) {
-      console.error(`[crew] failed to load WIRE_PRIVATE_KEY:`, e);
-    }
-  } else {
-    console.error("[crew] WIRE_PRIVATE_KEY not set — pre-registration disabled");
-  }
-
   const transport = new StdioServerTransport();
   await mcp.connect(transport);
 
@@ -613,5 +579,5 @@ export async function startServer(): Promise<void> {
 
   const report = await orchestrator.reconcile();
   console.error(`[crew] boot reconcile:\n${report}`);
-  console.error(`[crew] ready (caller=${CALLER_AGENT_ID}, terminal=${terminalName})`);
+  console.error(`[crew] ready (caller=${CALLER_AGENT_ID}, terminal=${terminalName}, cc_session=${ccSessionId ?? "unknown"})`);
 }
