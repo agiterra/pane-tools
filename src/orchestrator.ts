@@ -587,22 +587,36 @@ export class Orchestrator {
       await new Promise((r) => setTimeout(r, 300));
     }
 
-    // Split relative to a named pane, raw session ID, tab's session, or fall back to current.
+    // Split relative to: explicit pane/session → tab's session → any pane in the tab.
+    // Never fall back to the caller's pane — that's always wrong for cross-tab creates.
     let sessionId: string;
-    const splitTarget = relativeTo ?? tabRow?.iterm_session_id;
-    if (splitTarget) {
-      const resolvedId = relativeTo ? this.resolveSession(relativeTo) : splitTarget;
-      const alive = await this.terminal.isSessionAlive(resolvedId);
-      if (!alive) {
-        throw new Error(
-          `cannot split relative to '${relativeTo ?? tab}': terminal session ${resolvedId} is dead or stale. ` +
-          `Re-register the pane or tab, or omit relative_to to split the caller's pane.`
-        );
+    let splitTarget = relativeTo ?? tabRow?.iterm_session_id;
+
+    // If the tab has no session ID, find any existing pane in the tab to split from
+    if (!splitTarget) {
+      const tabPanes = this.store.listPanes(tab);
+      const paneWithSession = tabPanes.find((p) => p.iterm_id);
+      if (paneWithSession) {
+        splitTarget = paneWithSession.iterm_id!;
       }
-      sessionId = await this.terminal.splitSessionWithProfile(resolvedId, direction, profileName);
-    } else {
-      sessionId = await this.terminal.splitPaneWithProfile(direction, profileName);
     }
+
+    if (!splitTarget) {
+      throw new Error(
+        `tab '${tab}' has no terminal session and no panes with sessions. ` +
+        `The tab may need to be re-created, or specify relative_to with a pane name.`
+      );
+    }
+
+    const resolvedId = relativeTo ? this.resolveSession(relativeTo) : splitTarget;
+    const alive = await this.terminal.isSessionAlive(resolvedId);
+    if (!alive) {
+      throw new Error(
+        `cannot split relative to '${relativeTo ?? tab}': terminal session ${resolvedId} is dead or stale. ` +
+        `Re-register the pane or tab, or specify a different relative_to.`
+      );
+    }
+    sessionId = await this.terminal.splitSessionWithProfile(resolvedId, direction, profileName);
 
     const pane = this.store.createPane(paneName, tab, position, tabRow?.theme ?? undefined);
     this.store.setPaneItermId(paneName, sessionId);
