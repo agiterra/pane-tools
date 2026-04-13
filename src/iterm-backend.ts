@@ -87,13 +87,15 @@ export class ItermBackend implements TerminalBackend {
     return iterm.splitSessionWithProfile(sessionId, direction, profileName);
   }
 
-  async flashSession(_sessionId: string): Promise<void> {
-    // iTerm2 has no tab flash/notification ring equivalent
+  async flashSession(sessionId: string): Promise<void> {
+    // Bounce the dock icon via OSC 1337 RequestAttention
+    await iterm.writeEscapeToSession(sessionId, "\x1b]1337;RequestAttention=fireworks\x07");
   }
 
-  async notifySession(sessionId: string, title: string, _body?: string): Promise<void> {
-    // Fall back to setting badge text with the title
-    return iterm.setBadge(sessionId, title);
+  async notifySession(sessionId: string, title: string, body?: string): Promise<void> {
+    // macOS notification banner via OSC 9
+    const msg = body ? `${title}: ${body}` : title;
+    await iterm.writeEscapeToSession(sessionId, `\x1b]9;${msg}\x07`);
   }
 
   async renameWorkspace(_sessionId: string, _name: string): Promise<void> {

@@ -140,6 +140,41 @@ export async function writeToSession(
 }
 
 /**
+ * Get the TTY device path for a specific iTerm2 session.
+ */
+export async function sessionTty(sessionId: string): Promise<string | null> {
+  try {
+    return await osascript(`
+      tell application "iTerm2"
+        repeat with w in windows
+          repeat with t in tabs of w
+            repeat with s in sessions of t
+              if id of s is "${sessionId}" then
+                return tty of s
+              end if
+            end repeat
+          end repeat
+        end repeat
+      end tell
+    `);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write an escape sequence directly to a session's TTY.
+ * Unlike writeToSession (which types text as input), this writes raw bytes
+ * to the terminal device — works even when the session is busy.
+ */
+export async function writeEscapeToSession(sessionId: string, escape: string): Promise<void> {
+  const tty = await sessionTty(sessionId);
+  if (!tty) return;
+  const { writeFileSync } = await import("fs");
+  writeFileSync(tty, escape);
+}
+
+/**
  * Close a specific iTerm2 session.
  * Throws if the session is not found or the close fails.
  */
