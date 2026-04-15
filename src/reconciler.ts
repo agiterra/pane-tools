@@ -25,6 +25,7 @@ export type ReconcileResult = {
   dead: string[];
   orphans: ScreenSession[];
   panesCleared: string[];
+  panesDeleted: string[];
   tabsCleared: string[];
   tabsThemed: Array<{ tab: string; theme: string }>;
   panesThemed: Array<{ pane: string; theme: string }>;
@@ -62,14 +63,19 @@ export async function reconcile(
   );
 
   // --- Pane session check ---
+  // Pane lifecycle follows iTerm: if we confirm the pane's iTerm session is
+  // gone, delete the DB row (deletePane detaches any agent claiming it).
+  // Panes with null iterm_id are left alone — they're transient, waiting for
+  // self-stamp at MCP startup to bind them to a real iTerm session.
   const panesCleared: string[] = [];
+  const panesDeleted: string[] = [];
   if (terminal) {
     for (const pane of store.listPanes()) {
       if (!pane.iterm_id) continue;
       const isAlive = await terminal.isSessionAlive(pane.iterm_id).catch(() => false);
       if (!isAlive) {
-        store.clearPaneItermId(pane.name);
-        panesCleared.push(pane.name);
+        store.deletePane(pane.name);
+        panesDeleted.push(pane.name);
       }
     }
   }
@@ -154,6 +160,9 @@ export async function reconcile(
           badgeColor,
         });
         await terminal.setProfile(original.iterm_id, profileName);
+        // SetProfile switches profile attributes but leaves the session title untouched.
+        // Always set the session name so live iTerm UI matches the DB pane name.
+        await terminal.setSessionName(original.iterm_id, titleCase(workingName));
         profilesApplied.push({ pane: workingName, profile: profileName });
       } catch (e) {
         console.error(`[crew] reconcile: failed to apply profile for pane '${workingName}':`, e);
@@ -163,7 +172,7 @@ export async function reconcile(
 
   return {
     alive, dead, orphans,
-    panesCleared, tabsCleared,
+    panesCleared, panesDeleted, tabsCleared,
     tabsThemed, panesThemed,
     panesRenamed, profilesApplied,
   };
@@ -184,6 +193,9 @@ export function formatReport(result: ReconcileResult, agents: Agent[]): string {
   }
   if (result.panesCleared.length > 0) {
     lines.push(`${result.panesCleared.length} pane(s) with dead terminal session: ${result.panesCleared.join(", ")}`);
+  }
+  if (result.panesDeleted.length > 0) {
+    lines.push(`${result.panesDeleted.length} orphan pane(s) pruned: ${result.panesDeleted.join(", ")}`);
   }
   if (result.tabsCleared.length > 0) {
     lines.push(`${result.tabsCleared.length} tab(s) with dead terminal session: ${result.tabsCleared.join(", ")}`);
