@@ -13,10 +13,22 @@ beforeEach(() => {
   store = new CrewStore(join(tmp, "test.db"));
 });
 
-function makeTerminal(aliveSessionIds: string[]): TerminalBackend {
+type TerminalCalls = {
+  setSessionName: Array<{ sessionId: string; name: string }>;
+  writePaneProfile: Array<{ paneName: string; backgroundImage?: string }>;
+  setProfile: Array<{ sessionId: string; profileName: string }>;
+};
+
+function makeTerminal(aliveSessionIds: string[]): TerminalBackend & { calls: TerminalCalls } {
   const alive = new Set(aliveSessionIds);
-  return {
+  const calls: TerminalCalls = {
+    setSessionName: [],
+    writePaneProfile: [],
+    setProfile: [],
+  };
+  const t: TerminalBackend & { calls: TerminalCalls } = {
     name: "test",
+    calls,
     currentSessionId: mock(async () => ""),
     sessionIdForTty: mock(async () => null),
     splitPane: mock(async () => ""),
@@ -25,18 +37,27 @@ function makeTerminal(aliveSessionIds: string[]): TerminalBackend {
     closeSession: mock(async () => {}),
     isSessionAlive: mock(async (id: string) => alive.has(id)),
     createTab: mock(async () => ""),
-    setSessionName: mock(async () => {}),
+    setSessionName: mock(async (sessionId: string, name: string) => {
+      calls.setSessionName.push({ sessionId, name });
+    }),
     setBadge: mock(async () => {}),
     flashSession: mock(async () => {}),
     notifySession: mock(async () => {}),
     renameWorkspace: mock(async () => {}),
-    writePaneProfile: mock(() => ""),
-    writeEmptyPaneProfile: mock(() => ""),
+    writePaneProfile: mock((profile: { paneName: string; backgroundImage?: string }) => {
+      calls.writePaneProfile.push({ paneName: profile.paneName, backgroundImage: profile.backgroundImage });
+      return `Crew ${profile.paneName}`;
+    }),
+    writeEmptyPaneProfile: mock(() => "Crew Empty Pane"),
+    setProfile: mock(async (sessionId: string, profileName: string) => {
+      calls.setProfile.push({ sessionId, profileName });
+    }),
     splitPaneWithProfile: mock(async () => ""),
     splitSessionWithProfile: mock(async () => ""),
     splitWebBrowser: mock(async () => ""),
     splitSessionWebBrowser: mock(async () => ""),
-  } as unknown as TerminalBackend;
+  } as unknown as TerminalBackend & { calls: TerminalCalls };
+  return t;
 }
 
 describe("reconcile theme healing", () => {
@@ -101,6 +122,57 @@ describe("reconcile terminal session checks", () => {
     const result = await reconcile(store, terminal);
     expect(result.tabsCleared).toEqual(["eng"]);
     expect(store.getTab("eng")!.iterm_session_id).toBeNull();
+  });
+
+  test("renames non-pool pane to a themed name and applies profile", async () => {
+    // brioche tab is themed cities; the test-east pane name is NOT in the cities pool.
+    store.createTab("brioche", "cities");
+    store.createPane("test-east", "brioche", "", "cities");
+    store.setPaneItermId("test-east", "session-brioche");
+    const terminal = makeTerminal(["session-brioche"]);
+    const result = await reconcile(store, terminal);
+
+    expect(result.panesRenamed.length).toBe(1);
+    expect(result.panesRenamed[0].from).toBe("test-east");
+    expect(result.panesRenamed[0].theme).toBe("cities");
+    const newName = result.panesRenamed[0].to;
+
+    // Pane was renamed in DB
+    expect(store.getPane("test-east")).toBeNull();
+    expect(store.getPane(newName)).not.toBeNull();
+
+    // setSessionName was called on the live session with title-cased new name
+    expect(terminal.calls.setSessionName.some((c) => c.sessionId === "session-brioche")).toBe(true);
+
+    // Profile was written and applied
+    expect(result.profilesApplied.length).toBe(1);
+    expect(terminal.calls.setProfile.some((c) => c.sessionId === "session-brioche")).toBe(true);
+  });
+
+  test("skips rename when pane name is already in the theme's pool", async () => {
+    // 'paris' IS in the cities pool, so no rename should happen.
+    store.createTab("fabrica", "cities");
+    store.createPane("paris", "fabrica", "", "cities");
+    store.setPaneItermId("paris", "session-paris");
+    const terminal = makeTerminal(["session-paris"]);
+    const result = await reconcile(store, terminal);
+
+    expect(result.panesRenamed).toEqual([]);
+    // But profile should still be applied (the heal applies even without rename)
+    expect(result.profilesApplied.length).toBe(1);
+    expect(result.profilesApplied[0].pane).toBe("paris");
+  });
+
+  test("skips heal when pane has no iterm_id", async () => {
+    store.createTab("brioche", "cities");
+    store.createPane("test-east", "brioche", "", "cities");
+    // no setPaneItermId — pane is not bound to a session
+    const terminal = makeTerminal([]);
+    const result = await reconcile(store, terminal);
+
+    expect(result.panesRenamed).toEqual([]);
+    expect(result.profilesApplied).toEqual([]);
+    expect(store.getPane("test-east")).not.toBeNull();
   });
 
   test("skips terminal checks when backend omitted", async () => {

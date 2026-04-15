@@ -225,6 +225,19 @@ export class CrewStore {
     this.db.prepare("UPDATE panes SET theme = ? WHERE name = ?").run(theme, name);
   }
 
+  /**
+   * Rename a pane and update all FK references (agents.pane).
+   * Throws if `to` already exists.
+   */
+  renamePane(from: string, to: string): void {
+    if (from === to) return;
+    if (this.getPane(to)) throw new Error(`pane '${to}' already exists`);
+    this.db.transaction(() => {
+      this.db.prepare("UPDATE panes SET name = ? WHERE name = ?").run(to, from);
+      this.db.prepare("UPDATE agents SET pane = ? WHERE pane = ?").run(to, from);
+    })();
+  }
+
   clearTabSession(name: string): void {
     this.db.prepare("UPDATE tabs SET iterm_session_id = NULL WHERE name = ?").run(name);
   }

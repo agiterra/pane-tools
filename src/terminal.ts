@@ -85,6 +85,13 @@ export interface TerminalBackend {
   writeEmptyPaneProfile(): string;
 
   /**
+   * Apply a named profile to an existing session.
+   * iTerm2: writes OSC 1337 SetProfile= to the session's TTY.
+   * cmux: no-op (cmux has no equivalent dynamic-profile concept).
+   */
+  setProfile(sessionId: string, profileName: string): Promise<void>;
+
+  /**
    * Split the current pane using a named profile. Returns new session ID.
    * On cmux, profile is ignored — just does a normal split.
    */

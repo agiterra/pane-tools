@@ -1,17 +1,24 @@
 /**
  * Reconciler — sync SQLite state with actual terminal + screen reality.
  *
- * Covers three drift surfaces:
+ * Covers four drift surfaces:
  * 1. Agents ↔ screen sessions (dead agents cleaned up, orphan screens flagged)
  * 2. Panes ↔ terminal sessions (pane.iterm_id cleared if session gone)
  * 3. Tabs ↔ terminal sessions + theme sanity (missing themes auto-assigned,
  *    dead iterm_session_id cleared)
+ * 4. Live theme application — for panes with iterm_id + a theme, ensure the
+ *    pane name comes from the theme's pool (rename if not), then write the
+ *    themed profile and apply it to the running session via setProfile.
  */
 
 import { CrewStore, type Agent } from "./store.js";
 import { listSessions, type ScreenSession } from "./screen.js";
-import { listThemes } from "./themes.js";
+import { listThemes, loadTheme, pickName, backgroundImagePath } from "./themes.js";
 import type { TerminalBackend } from "./terminal.js";
+
+function titleCase(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
 
 export type ReconcileResult = {
   alive: string[];
@@ -21,14 +28,10 @@ export type ReconcileResult = {
   tabsCleared: string[];
   tabsThemed: Array<{ tab: string; theme: string }>;
   panesThemed: Array<{ pane: string; theme: string }>;
+  panesRenamed: Array<{ from: string; to: string; theme: string }>;
+  profilesApplied: Array<{ pane: string; profile: string }>;
 };
 
-/**
- * Reconcile DB state with running screen sessions and terminal state.
- *
- * Terminal backend is optional — if omitted, pane/tab session checks are
- * skipped. Theme healing runs unconditionally.
- */
 export async function reconcile(
   store: CrewStore,
   terminal?: TerminalBackend,
@@ -44,7 +47,6 @@ export async function reconcile(
   for (const agent of agents) {
     knownScreenNames.add(agent.screen_name);
     const session = sessionByName.get(agent.screen_name);
-
     if (session) {
       store.updateAgentPid(agent.id, session.pid);
       store.touchAgent(agent.id);
@@ -64,8 +66,8 @@ export async function reconcile(
   if (terminal) {
     for (const pane of store.listPanes()) {
       if (!pane.iterm_id) continue;
-      const alive = await terminal.isSessionAlive(pane.iterm_id).catch(() => false);
-      if (!alive) {
+      const isAlive = await terminal.isSessionAlive(pane.iterm_id).catch(() => false);
+      if (!isAlive) {
         store.clearPaneItermId(pane.name);
         panesCleared.push(pane.name);
       }
@@ -79,8 +81,8 @@ export async function reconcile(
 
   for (const tab of store.listTabs()) {
     if (terminal && tab.iterm_session_id) {
-      const alive = await terminal.isSessionAlive(tab.iterm_session_id).catch(() => false);
-      if (!alive) {
+      const isAlive = await terminal.isSessionAlive(tab.iterm_session_id).catch(() => false);
+      if (!isAlive) {
         store.clearTabSession(tab.name);
         tabsCleared.push(tab.name);
       }
@@ -107,12 +109,66 @@ export async function reconcile(
     }
   }
 
-  return { alive, dead, orphans, panesCleared, tabsCleared, tabsThemed, panesThemed };
+  // --- Live theme application: rename to pool name if needed, write+apply profile ---
+  const panesRenamed: Array<{ from: string; to: string; theme: string }> = [];
+  const profilesApplied: Array<{ pane: string; profile: string }> = [];
+  if (terminal) {
+    // Re-fetch panes after rename to get current name
+    let panesSnapshot = store.listPanes();
+    for (let i = 0; i < panesSnapshot.length; i++) {
+      const original = panesSnapshot[i];
+      if (!original.iterm_id || !original.theme) continue;
+
+      let workingName = original.name;
+      const themeConfig = loadTheme(original.theme);
+      const pool = themeConfig?.pool ?? [];
+
+      // If pane's current name isn't in the theme's pool, swap to an unused pool name.
+      if (pool.length > 0 && !pool.includes(workingName)) {
+        const usedNames = store.listPanes().map((p) => p.name);
+        const newName = pickName(original.theme, usedNames);
+        if (newName) {
+          try {
+            store.renamePane(workingName, newName);
+            await terminal.setSessionName(original.iterm_id, titleCase(newName));
+            panesRenamed.push({ from: workingName, to: newName, theme: original.theme });
+            workingName = newName;
+            // Refresh local snapshot index
+            panesSnapshot = store.listPanes();
+          } catch (e) {
+            console.error(`[crew] reconcile: failed to rename pane '${workingName}' → '${newName}':`, e);
+            continue;
+          }
+        }
+      }
+
+      // Build the themed profile and apply it to the live session.
+      const bgPath = backgroundImagePath(original.theme, workingName, themeConfig);
+      const badgeColor = themeConfig?.badgeColors?.[workingName] ?? themeConfig?.defaultBadgeColor;
+      try {
+        const profileName = terminal.writePaneProfile({
+          paneName: workingName,
+          backgroundImage: bgPath ?? undefined,
+          blend: themeConfig?.background.blend,
+          mode: themeConfig?.background.mode,
+          badgeColor,
+        });
+        await terminal.setProfile(original.iterm_id, profileName);
+        profilesApplied.push({ pane: workingName, profile: profileName });
+      } catch (e) {
+        console.error(`[crew] reconcile: failed to apply profile for pane '${workingName}':`, e);
+      }
+    }
+  }
+
+  return {
+    alive, dead, orphans,
+    panesCleared, tabsCleared,
+    tabsThemed, panesThemed,
+    panesRenamed, profilesApplied,
+  };
 }
 
-/**
- * Format a reconcile result as a human-readable boot report.
- */
 export function formatReport(result: ReconcileResult, agents: Agent[]): string {
   const lines: string[] = [];
   const attached = agents.filter((a) => a.pane);
@@ -137,6 +193,12 @@ export function formatReport(result: ReconcileResult, agents: Agent[]): string {
   }
   if (result.panesThemed.length > 0) {
     lines.push(`${result.panesThemed.length} pane(s) theme inherited from tab: ${result.panesThemed.map((p) => `${p.pane}→${p.theme}`).join(", ")}`);
+  }
+  if (result.panesRenamed.length > 0) {
+    lines.push(`${result.panesRenamed.length} pane(s) renamed to themed pool: ${result.panesRenamed.map((p) => `${p.from}→${p.to} (${p.theme})`).join(", ")}`);
+  }
+  if (result.profilesApplied.length > 0) {
+    lines.push(`${result.profilesApplied.length} pane profile(s) applied: ${result.profilesApplied.map((p) => `${p.pane}=${p.profile}`).join(", ")}`);
   }
 
   for (const agent of agents) {
