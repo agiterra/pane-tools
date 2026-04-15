@@ -217,6 +217,18 @@ export class CrewStore {
     this.db.prepare("UPDATE panes SET iterm_id = ? WHERE name = ?").run(itermId, name);
   }
 
+  clearPaneItermId(name: string): void {
+    this.db.prepare("UPDATE panes SET iterm_id = NULL WHERE name = ?").run(name);
+  }
+
+  setPaneTheme(name: string, theme: string): void {
+    this.db.prepare("UPDATE panes SET theme = ? WHERE name = ?").run(theme, name);
+  }
+
+  clearTabSession(name: string): void {
+    this.db.prepare("UPDATE tabs SET iterm_session_id = NULL WHERE name = ?").run(name);
+  }
+
   deletePane(name: string): void {
     // Detach any agent in this pane
     this.db.prepare("UPDATE agents SET pane = NULL WHERE pane = ?").run(name);
