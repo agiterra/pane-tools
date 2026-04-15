@@ -216,6 +216,11 @@ export class CmuxBackend implements TerminalBackend {
     return "cmux-default";
   }
 
+  async setProfile(_sessionId: string, _profileName: string): Promise<void> {
+    // cmux has no dynamic-profile concept — background images live in theme.json
+    // sidebar metadata, not per-session profiles. No-op.
+  }
+
   async splitPaneWithProfile(
     direction: "horizontal" | "vertical",
     _profileName: string,

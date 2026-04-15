@@ -68,6 +68,11 @@ export class ItermBackend implements TerminalBackend {
     return "Crew Empty Pane";
   }
 
+  async setProfile(sessionId: string, profileName: string): Promise<void> {
+    // OSC 1337 SetProfile= switches the session to a named (dynamic) profile.
+    await iterm.writeEscapeToSession(sessionId, `\x1b]1337;SetProfile=${profileName}\x07`);
+  }
+
   splitPaneWithProfile(
     direction: "horizontal" | "vertical",
     profileName: string,
