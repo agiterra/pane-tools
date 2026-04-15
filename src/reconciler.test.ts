@@ -96,14 +96,24 @@ describe("reconcile theme healing", () => {
 });
 
 describe("reconcile terminal session checks", () => {
-  test("clears dead pane iterm_id", async () => {
+  test("deletes pane with dead session and no agent ref", async () => {
     store.createTab("eng", "trees");
     store.createPane("oak", "eng");
     store.setPaneItermId("oak", "session-dead");
     const terminal = makeTerminal([]);
     const result = await reconcile(store, terminal);
-    expect(result.panesCleared).toEqual(["oak"]);
-    expect(store.getPane("oak")!.iterm_id).toBeNull();
+    expect(result.panesDeleted).toEqual(["oak"]);
+    expect(result.panesCleared).toEqual([]);
+    expect(store.getPane("oak")).toBeNull();
+  });
+
+  test("leaves null-iterm_id pane alone (transient, waiting for self-stamp)", async () => {
+    store.createTab("eng", "trees");
+    store.createPane("oak", "eng"); // never bound
+    const terminal = makeTerminal([]);
+    const result = await reconcile(store, terminal);
+    expect(result.panesDeleted).toEqual([]);
+    expect(store.getPane("oak")).not.toBeNull();
   });
 
   test("keeps alive pane iterm_id", async () => {
@@ -161,6 +171,13 @@ describe("reconcile terminal session checks", () => {
     // But profile should still be applied (the heal applies even without rename)
     expect(result.profilesApplied.length).toBe(1);
     expect(result.profilesApplied[0].pane).toBe("paris");
+    // And the session title must be refreshed so iTerm shows the pane name,
+    // even though the pane wasn't renamed.
+    expect(
+      terminal.calls.setSessionName.some(
+        (c) => c.sessionId === "session-paris" && c.name === "Paris",
+      ),
+    ).toBe(true);
   });
 
   test("skips heal when pane has no iterm_id", async () => {
@@ -172,6 +189,8 @@ describe("reconcile terminal session checks", () => {
 
     expect(result.panesRenamed).toEqual([]);
     expect(result.profilesApplied).toEqual([]);
+    // Null iterm_id is transient (waiting for self-stamp) — pane is preserved.
+    expect(result.panesDeleted).toEqual([]);
     expect(store.getPane("test-east")).not.toBeNull();
   });
 
