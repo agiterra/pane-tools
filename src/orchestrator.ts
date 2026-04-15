@@ -846,7 +846,7 @@ export class Orchestrator {
    * Run on boot and periodically.
    */
   async reconcile(): Promise<string> {
-    const result = await reconcile(this.store);
+    const result = await reconcile(this.store, this.terminal);
     const agents = this.store.listAgents();
     return formatReport(result, agents);
   }

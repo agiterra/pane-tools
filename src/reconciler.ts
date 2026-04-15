@@ -1,26 +1,38 @@
 /**
- * Agent reconciler — sync SQLite state with actual screen sessions.
+ * Reconciler — sync SQLite state with actual terminal + screen reality.
  *
- * Same pattern as the Wire session reconciler:
- * 1. Read all agents from DB
- * 2. Check screen -ls for live sessions
- * 3. Mark dead agents, clear their panes
- * 4. Flag orphan screen sessions
+ * Covers three drift surfaces:
+ * 1. Agents ↔ screen sessions (dead agents cleaned up, orphan screens flagged)
+ * 2. Panes ↔ terminal sessions (pane.iterm_id cleared if session gone)
+ * 3. Tabs ↔ terminal sessions + theme sanity (missing themes auto-assigned,
+ *    dead iterm_session_id cleared)
  */
 
 import { CrewStore, type Agent } from "./store.js";
 import { listSessions, type ScreenSession } from "./screen.js";
+import { listThemes } from "./themes.js";
+import type { TerminalBackend } from "./terminal.js";
 
 export type ReconcileResult = {
   alive: string[];
   dead: string[];
   orphans: ScreenSession[];
+  panesCleared: string[];
+  tabsCleared: string[];
+  tabsThemed: Array<{ tab: string; theme: string }>;
+  panesThemed: Array<{ pane: string; theme: string }>;
 };
 
 /**
- * Reconcile DB state with running screen sessions.
+ * Reconcile DB state with running screen sessions and terminal state.
+ *
+ * Terminal backend is optional — if omitted, pane/tab session checks are
+ * skipped. Theme healing runs unconditionally.
  */
-export async function reconcile(store: CrewStore): Promise<ReconcileResult> {
+export async function reconcile(
+  store: CrewStore,
+  terminal?: TerminalBackend,
+): Promise<ReconcileResult> {
   const agents = store.listAgents();
   const sessions = await listSessions();
   const sessionByName = new Map(sessions.map((s) => [s.name, s]));
@@ -34,24 +46,68 @@ export async function reconcile(store: CrewStore): Promise<ReconcileResult> {
     const session = sessionByName.get(agent.screen_name);
 
     if (session) {
-      // Alive — update PID and last_seen
       store.updateAgentPid(agent.id, session.pid);
       store.touchAgent(agent.id);
       alive.push(agent.id);
     } else {
-      // Dead — clear pane, remove from DB
       store.deleteAgent(agent.id);
       dead.push(agent.id);
     }
   }
 
-  // Find orphan screen sessions (not tracked in DB)
-  // Only flag sessions with our naming prefix
   const orphans = sessions.filter(
     (s) => s.name.startsWith("wire-") && !knownScreenNames.has(s.name),
   );
 
-  return { alive, dead, orphans };
+  // --- Pane session check ---
+  const panesCleared: string[] = [];
+  if (terminal) {
+    for (const pane of store.listPanes()) {
+      if (!pane.iterm_id) continue;
+      const alive = await terminal.isSessionAlive(pane.iterm_id).catch(() => false);
+      if (!alive) {
+        store.clearPaneItermId(pane.name);
+        panesCleared.push(pane.name);
+      }
+    }
+  }
+
+  // --- Tab session check + theme heal ---
+  const tabsCleared: string[] = [];
+  const tabsThemed: Array<{ tab: string; theme: string }> = [];
+  const availableThemes = listThemes();
+
+  for (const tab of store.listTabs()) {
+    if (terminal && tab.iterm_session_id) {
+      const alive = await terminal.isSessionAlive(tab.iterm_session_id).catch(() => false);
+      if (!alive) {
+        store.clearTabSession(tab.name);
+        tabsCleared.push(tab.name);
+      }
+    }
+
+    if (!tab.theme && availableThemes.length > 0) {
+      const usedThemes = new Set(
+        store.listTabs().map((t) => t.theme).filter(Boolean) as string[],
+      );
+      const picked = availableThemes.find((t) => !usedThemes.has(t)) ?? availableThemes[0];
+      store.setTabTheme(tab.name, picked);
+      tabsThemed.push({ tab: tab.name, theme: picked });
+    }
+  }
+
+  // --- Pane theme heal (inherit from tab) ---
+  const panesThemed: Array<{ pane: string; theme: string }> = [];
+  for (const pane of store.listPanes()) {
+    if (pane.theme) continue;
+    const tab = store.getTab(pane.tab);
+    if (tab?.theme) {
+      store.setPaneTheme(pane.name, tab.theme);
+      panesThemed.push({ pane: pane.name, theme: tab.theme });
+    }
+  }
+
+  return { alive, dead, orphans, panesCleared, tabsCleared, tabsThemed, panesThemed };
 }
 
 /**
@@ -69,6 +125,18 @@ export function formatReport(result: ReconcileResult, agents: Agent[]): string {
   }
   if (result.orphans.length > 0) {
     lines.push(`${result.orphans.length} orphan screen session(s): ${result.orphans.map((o) => o.name).join(", ")}`);
+  }
+  if (result.panesCleared.length > 0) {
+    lines.push(`${result.panesCleared.length} pane(s) with dead terminal session: ${result.panesCleared.join(", ")}`);
+  }
+  if (result.tabsCleared.length > 0) {
+    lines.push(`${result.tabsCleared.length} tab(s) with dead terminal session: ${result.tabsCleared.join(", ")}`);
+  }
+  if (result.tabsThemed.length > 0) {
+    lines.push(`${result.tabsThemed.length} tab(s) auto-themed: ${result.tabsThemed.map((t) => `${t.tab}→${t.theme}`).join(", ")}`);
+  }
+  if (result.panesThemed.length > 0) {
+    lines.push(`${result.panesThemed.length} pane(s) theme inherited from tab: ${result.panesThemed.map((p) => `${p.pane}→${p.theme}`).join(", ")}`);
   }
 
   for (const agent of agents) {
