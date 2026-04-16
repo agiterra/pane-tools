@@ -175,6 +175,22 @@ export class Orchestrator {
     // Check if this exact screen session is already registered
     const existingByScreen = this.store.getAgentByScreen(screenName);
     if (existingByScreen) {
+      // Safety: refuse if the caller is trying to register under an id that
+      // doesn't match the agent that OWNS this screen session. Without this,
+      // Brioche calling registerAgent({id:'danish'}) from her own screen
+      // would overwrite her own DB row's cc_session_id with Danish's id —
+      // silently corrupting her identity record. STY is the ground truth
+      // for "who is running in this process"; opts.id must agree with it.
+      if (existingByScreen.id !== opts.id) {
+        throw new Error(
+          `registerAgent: screen '${screenName}' is owned by agent ` +
+          `'${existingByScreen.id}' but called with id='${opts.id}'. ` +
+          `STY identifies the running process — you can only register ` +
+          `yourself. If you want to register a DIFFERENT agent (e.g. one ` +
+          `you spawned), call agent_register from inside that agent's ` +
+          `own screen session, not yours.`,
+        );
+      }
       this.store.updateAgentPid(existingByScreen.id, screenPid);
       if (ccSessionId) this.store.updateAgentCcSession(screenName, ccSessionId);
       if (!existingByScreen.pane && callerPane) {
