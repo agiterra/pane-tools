@@ -7,6 +7,7 @@ import type { TerminalBackend } from "./terminal";
 // Capture the command passed to screen.createSession so we can assert on the
 // spawn-time env exports. Mock is installed before Orchestrator is imported.
 const createSessionCalls: Array<{ name: string; command: string }> = [];
+const screenState = { isAliveResult: false };
 mock.module("./screen", () => ({
   createSession: async (name: string, command: string) => {
     createSessionCalls.push({ name, command });
@@ -14,7 +15,7 @@ mock.module("./screen", () => ({
   },
   listSessions: async () => [],
   getSessionPid: async () => null,
-  isAlive: async () => false,
+  isAlive: async () => screenState.isAliveResult,
   detachSession: async () => {},
   sendKeys: async () => {},
   readOutput: async () => "",
@@ -208,5 +209,30 @@ describe("idle TTL + reaper", () => {
 
     const fresh = orch.store.getAgent("active");
     expect(fresh!.last_seen).toBeGreaterThan(staleTs);
+  });
+});
+
+describe("registerAgent id-mismatch safety", () => {
+  test("throws when caller id doesn't match the agent owning the screen", async () => {
+    // Simulate Brioche running in screen 'wire-brioche' with an existing row
+    await orch.launchAgent({ env: { AGENT_ID: "brioche", AGENT_NAME: "Brioche" } });
+
+    const prevSty = process.env.STY;
+    process.env.STY = "99999.wire-brioche";
+    screenState.isAliveResult = true;
+    try {
+      await expect(
+        orch.registerAgent({ id: "danish", displayName: "Danish" }),
+      ).rejects.toThrow(/owned by agent 'brioche' but called with id='danish'/);
+
+      // Brioche's row must be untouched
+      const row = orch.store.getAgent("brioche");
+      expect(row).not.toBeNull();
+      expect(row!.cc_session_id).toBeNull();
+    } finally {
+      if (prevSty === undefined) delete process.env.STY;
+      else process.env.STY = prevSty;
+      screenState.isAliveResult = false;
+    }
   });
 });
