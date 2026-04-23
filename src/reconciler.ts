@@ -45,12 +45,21 @@ export async function reconcile(
   const agents = store.listAgents();
   const sessions = await listSessions();
   const sessionByName = new Map(sessions.map((s) => [s.name, s]));
+  const localMachine = store.localMachineName();
 
   const alive: string[] = [];
   const dead: string[] = [];
   const knownScreenNames = new Set<string>();
 
   for (const agent of agents) {
+    // Cross-machine safety: the local reconciler is NOT authoritative for
+    // agents on peer machines. Their screen sessions live on the remote
+    // host; `screen -ls` here will always return nothing for them. Without
+    // this skip, the first time a peer is registered and fleet_list
+    // populates the DB with remote rows, the next boot would cascade-
+    // delete every remote agent — classic latent fatal bug.
+    if (agent.machine_name !== localMachine) continue;
+
     knownScreenNames.add(agent.screen_name);
     const session = sessionByName.get(agent.screen_name);
     if (session) {
